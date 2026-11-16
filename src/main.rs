@@ -1,0 +1,37 @@
+//! Portfolio jeu vidéo — une île à explorer, avec une fiche par projet.
+
+mod camera;
+mod fiche;
+mod joueur;
+mod monde;
+mod projets;
+mod rendu;
+
+use avian3d::prelude::*;
+use bevy::prelude::*;
+
+fn main() {
+    App::new()
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Portfolio".into(),
+                // Dans le navigateur : dessine dans le <canvas> de index.html et suit sa taille
+                canvas: Some("#jeu".into()),
+                fit_canvas_to_parent: true,
+                prevent_default_event_handling: true,
+                ..default()
+            }),
+            ..default()
+        }))
+        .add_plugins(PhysicsPlugins::default())
+        // Gravité un peu plus forte que la réalité : sauts plus nerveux, comme dans un jeu de plateforme
+        .insert_resource(Gravity(Vec3::NEG_Y * 25.0))
+        .add_plugins((
+            rendu::RenduPlugin,
+            monde::MondePlugin,
+            joueur::JoueurPlugin,
+            camera::CameraPlugin,
+            fiche::FichePlugin,
+        ))
+        .run();
+}
