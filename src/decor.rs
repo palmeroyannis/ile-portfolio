@@ -20,10 +20,12 @@ const PAS_HERBE: f32 = 1.5; // espacement de la grille de semis, en mètres
 const DENSITE_HERBE: f32 = 0.55; // proportion de cases qui reçoivent une touffe
 const PART_FLEURS: f32 = 0.10;
 
-const VERT_PALME: Color = Color::srgb(0.20, 0.55, 0.18);
-const VERT_PALME_CLAIR: Color = Color::srgb(0.32, 0.68, 0.22);
-const ECORCE: Color = Color::srgb(0.55, 0.42, 0.28);
-const ECORCE_SOMBRE: Color = Color::srgb(0.42, 0.31, 0.20);
+// Modèle du palmier (assets/modeles/palmier.glb, 312 triangles) : tronc de 3 m qui se courbe vers +X.
+const MODELE_PALMIER: &str = "modeles/palmier.glb";
+const SOMMET_MODELE: Vec3 = Vec3::new(0.35, 3.0, 0.0); // haut du tronc dans le modèle
+const RAYON_PIED_MODELE: f32 = 0.20;
+const RAYON_HAUT_MODELE: f32 = 0.12;
+
 const HERBE: Color = Color::srgb(0.38, 0.70, 0.22);
 const PIERRE: Color = Color::srgb(0.58, 0.56, 0.52);
 const BOIS: Color = Color::srgb(0.60, 0.43, 0.26);
@@ -68,6 +70,7 @@ struct Ecume {
 
 fn creer_decor(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -77,7 +80,7 @@ fn creer_decor(
     let double = materials.add(matiere_couleurs(grain, true));
 
     creer_ecume(&mut commands, &mut meshes, &mut materials);
-    creer_palmiers(&mut commands, &mut meshes, &simple, &double);
+    creer_palmiers(&mut commands, &mut meshes, &asset_server, &simple);
     creer_herbe(&mut commands, &mut meshes, &double);
     creer_rochers(&mut commands, &mut meshes, &simple);
     creer_ponton(&mut commands, &mut meshes, &simple);
@@ -241,88 +244,54 @@ pub fn palmiers() -> Vec<Palmier> {
 fn creer_palmiers(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
+    asset_server: &AssetServer,
     simple: &Handle<StandardMaterial>,
-    double: &Handle<StandardMaterial>,
 ) {
-    let mut troncs = Constructeur::default();
-    let mut palmes = Constructeur::default();
+    // Un seul chargement, réutilisé par tous les palmiers : Bevy les dessine ensemble
+    let modele = asset_server.load(GltfAssetLabel::Scene(0).from_asset(MODELE_PALMIER));
+    let mut noix = Constructeur::default();
 
     for (n, palmier) in palmiers().iter().enumerate() {
-        let graine = n as u32;
-        let (pied, hauteur_tronc, penche) = (palmier.pied, palmier.hauteur_tronc, palmier.penche);
-
-        // Tronc en tronçons, de plus en plus fins, sur une courbe
-        let troncons = 7;
-        let point = |t: f32| pied + Vec3::Y * hauteur_tronc * t + penche * t * t;
-        for k in 0..troncons {
-            let t0 = k as f32 / troncons as f32;
-            let t1 = (k + 1) as f32 / troncons as f32;
-            let r0 = 0.26 - 0.10 * t0;
-            let r1 = 0.26 - 0.10 * t1;
-            let couleur = if k % 2 == 0 { ECORCE } else { ECORCE_SOMBRE };
-            // Chaque tronçon s'évase un peu en bas : les anneaux de l'écorce
-            troncs.cylindre(point(t0), point(t1), r0 * 1.12, r1, 6, couleur, false);
-        }
+        let (pied, penche) = (palmier.pied, palmier.penche);
         let sommet = palmier.sommet();
 
-        // Noix de coco
+        // On oriente et on agrandit le modèle pour que le haut de son tronc tombe pile sur
+        // le sommet prévu : même inclinaison vers le large, ombres peintes inchangées.
+        let voulu = sommet - pied;
+        let dehors = Vec2::new(penche.x, penche.z).normalize_or(Vec2::X);
+        let lacet = Quat::from_rotation_y((-dehors.y).atan2(dehors.x));
+        let inclinaison =
+            Quat::from_rotation_arc((lacet * SOMMET_MODELE).normalize(), voulu.normalize());
+        let echelle = voulu.length() / SOMMET_MODELE.length();
+        commands.spawn((
+            WorldAssetRoot(modele.clone()),
+            Transform::from_translation(pied)
+                .with_rotation(inclinaison * lacet)
+                .with_scale(Vec3::splat(echelle)),
+        ));
+
+        // Noix de coco, collées au haut du tronc
+        let rayon = RAYON_HAUT_MODELE * echelle + 0.06;
         for k in 0..3 {
             let a = k as f32 * TAU / 3.0 + n as f32;
-            troncs.losange(
-                sommet + Vec3::new(a.cos() * 0.2, -0.15, a.sin() * 0.2),
+            noix.losange(
+                sommet + Vec3::new(a.cos() * rayon, -0.15, a.sin() * rayon),
                 Vec3::splat(0.13),
                 Color::srgb(0.42, 0.30, 0.15),
             );
-        }
-
-        // Palmes : des bandes pliées en V qui retombent
-        let nombre = 8;
-        for k in 0..nombre {
-            let angle = k as f32 / nombre as f32 * TAU + hasard(graine, k, 21) * 0.4;
-            let direction = Vec3::new(angle.cos(), 0.0, angle.sin());
-            let cote = Vec3::new(-direction.z, 0.0, direction.x);
-            let longueur = 2.6 + 0.8 * hasard(graine, k, 22);
-            let montee = 0.5 + 0.4 * hasard(graine, k, 23);
-            let couleur = if k % 2 == 0 {
-                VERT_PALME
-            } else {
-                VERT_PALME_CLAIR
-            };
-
-            let sections = 6;
-            let section = |i: usize| {
-                let s = i as f32 / sections as f32;
-                let axe = sommet + direction * longueur * s + Vec3::Y * (montee * s - 1.9 * s * s);
-                let largeur = 0.08 + 0.55 * (PI * s).sin() * (1.0 - 0.3 * s);
-                let gauche = axe + cote * largeur - Vec3::Y * 0.18 * largeur;
-                let droite = axe - cote * largeur - Vec3::Y * 0.18 * largeur;
-                (gauche, axe + Vec3::Y * 0.05 * largeur, droite)
-            };
-            for i in 0..sections {
-                let (g0, c0, d0) = section(i);
-                let (g1, c1, d1) = section(i + 1);
-                let teinte = nuance(couleur, 0.8 + 0.25 * i as f32 / sections as f32);
-                palmes.quad_double(g0, c0, c1, g1, teinte);
-                palmes.quad_double(c0, d0, d1, c1, nuance(teinte, 0.92));
-            }
         }
 
         // Collision : un poteau sur le bas du tronc, là où le personnage peut buter
         commands.spawn((
             Transform::from_translation(pied + Vec3::Y * 1.5 + penche * 0.05),
             RigidBody::Static,
-            Collider::cylinder(0.28, 3.0),
+            Collider::cylinder(RAYON_PIED_MODELE * echelle, 3.0),
         ));
     }
 
-    troncs.assombrir_pres_du_sol();
     commands.spawn((
-        Mesh3d(meshes.add(troncs.construire())),
+        Mesh3d(meshes.add(noix.construire())),
         MeshMaterial3d(simple.clone()),
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(palmes.construire())),
-        MeshMaterial3d(double.clone()),
     ));
 }
 
