@@ -23,7 +23,10 @@ impl Plugin for FichePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Fiche>()
             .add_systems(Startup, charger_polices)
-            .add_systems(Update, (gerer_fiche, afficher_fiche, afficher_invite).chain());
+            .add_systems(
+                Update,
+                (gerer_fiche, afficher_fiche, afficher_invite).chain(),
+            );
     }
 }
 
@@ -94,7 +97,9 @@ fn gerer_fiche(
             let ici = joueur.translation.xz();
             let proche = reperes
                 .iter()
-                .map(|(transform, repere)| (transform.translation.xz().distance(ici), repere.projet))
+                .map(|(transform, repere)| {
+                    (transform.translation.xz().distance(ici), repere.projet)
+                })
                 .filter(|(distance, _)| *distance < DISTANCE_INTERACTION)
                 .min_by(|a, b| a.0.total_cmp(&b.0))
                 .map(|(_, projet)| projet);
@@ -224,7 +229,11 @@ fn afficher_fiche(
                                                     border: UiRect::all(px(2)),
                                                     ..default()
                                                 },
-                                                BorderColor::all(if i == photo { TURQUOISE } else { TRAIT }),
+                                                BorderColor::all(if i == photo {
+                                                    TURQUOISE
+                                                } else {
+                                                    TRAIT
+                                                }),
                                             ));
                                         }
                                     });
@@ -243,7 +252,11 @@ fn afficher_fiche(
                             ..default()
                         })
                         .with_children(|droite| {
-                            droite.spawn((Text::new(projet.titre), police(&polices.gras, 32.0), TextColor(BLANC)));
+                            droite.spawn((
+                                Text::new(projet.titre),
+                                police(&polices.gras, 32.0),
+                                TextColor(BLANC),
+                            ));
                             droite.spawn((
                                 Text::new(projet.sous_titre),
                                 police(&polices.normal, 15.0),
@@ -303,7 +316,11 @@ fn afficher_fiche(
                             } else {
                                 "E ou Échap : fermer"
                             };
-                            droite.spawn((Text::new(aide), police(&polices.normal, 14.0), TextColor(GRIS)));
+                            droite.spawn((
+                                Text::new(aide),
+                                police(&polices.normal, 14.0),
+                                TextColor(GRIS),
+                            ));
                         });
                 });
         });
@@ -363,7 +380,11 @@ fn afficher_invite(
                     BorderColor::all(TRAIT),
                 ))
                 .with_children(|boite| {
-                    boite.spawn((Text::new("E"), police(&polices.gras, 16.0), TextColor(TURQUOISE)));
+                    boite.spawn((
+                        Text::new("E"),
+                        police(&polices.gras, 16.0),
+                        TextColor(TURQUOISE),
+                    ));
                     boite.spawn((
                         Text::new(format!("Voir le projet : {}", PROJETS[numero].titre)),
                         police(&polices.normal, 16.0),

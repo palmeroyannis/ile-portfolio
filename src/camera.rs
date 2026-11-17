@@ -3,8 +3,8 @@
 
 use std::f32::consts::PI;
 
-use bevy::core_pipeline::tonemapping::Tonemapping;
 use avian3d::prelude::*;
+use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
 
 use crate::joueur::Joueur;
@@ -92,7 +92,8 @@ fn placer_camera(
     let filtre = SpatialQueryFilter::from_excluded_entities([entite_joueur]);
     let mut recul_possible = DISTANCE;
     if let Ok(direction) = Dir3::new(arriere) {
-        if let Some(contact) = recherche.cast_ray(orbite.cible, direction, DISTANCE, true, &filtre) {
+        if let Some(contact) = recherche.cast_ray(orbite.cible, direction, DISTANCE, true, &filtre)
+        {
             recul_possible = (contact.distance - MARGE_OBSTACLE).max(0.8);
         }
     }

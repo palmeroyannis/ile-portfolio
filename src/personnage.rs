@@ -49,7 +49,10 @@ pub struct Allure {
 
 /// Maillage aux faces plates : chaque facette a sa propre normale, les arêtes se voient.
 fn facettes(maillage: impl Into<Mesh>) -> Mesh {
-    maillage.into().with_duplicated_vertices().with_computed_flat_normals()
+    maillage
+        .into()
+        .with_duplicated_vertices()
+        .with_computed_flat_normals()
 }
 
 pub fn construire(
@@ -82,7 +85,12 @@ pub fn construire(
     let boite = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
 
     parent
-        .spawn((Apparence, Allure::default(), Transform::default(), Visibility::default()))
+        .spawn((
+            Apparence,
+            Allure::default(),
+            Transform::default(),
+            Visibility::default(),
+        ))
         .with_children(|corps| {
             // Tronc (légèrement aplati d'avant en arrière)
             corps.spawn((
@@ -108,7 +116,11 @@ pub fn construire(
                 Transform::from_xyz(0.0, 0.40, 0.26).with_scale(Vec3::new(0.24, 0.10, 0.05)),
             ));
             // Cou et tête
-            corps.spawn((Mesh3d(cou), MeshMaterial3d(peau.clone()), Transform::from_xyz(0.0, 0.57, 0.0)));
+            corps.spawn((
+                Mesh3d(cou),
+                MeshMaterial3d(peau.clone()),
+                Transform::from_xyz(0.0, 0.57, 0.0),
+            ));
             corps.spawn((
                 Mesh3d(tete.clone()),
                 MeshMaterial3d(peau.clone()),
@@ -124,7 +136,11 @@ pub fn construire(
             // Jambes : pivot à la hanche, maillage pendu dessous
             for (membre, x) in [(Membre::JambeGauche, -0.10), (Membre::JambeDroite, 0.10)] {
                 corps
-                    .spawn((membre, Transform::from_xyz(x, HANCHES, 0.0), Visibility::default()))
+                    .spawn((
+                        membre,
+                        Transform::from_xyz(x, HANCHES, 0.0),
+                        Visibility::default(),
+                    ))
                     .with_children(|pivot| {
                         pivot.spawn((
                             Mesh3d(jambe.clone()),
@@ -142,13 +158,18 @@ pub fn construire(
             // Bras : pivot à l'épaule
             for (membre, x) in [(Membre::BrasGauche, -0.27), (Membre::BrasDroit, 0.27)] {
                 corps
-                    .spawn((membre, Transform::from_xyz(x, EPAULES, 0.0), Visibility::default()))
+                    .spawn((
+                        membre,
+                        Transform::from_xyz(x, EPAULES, 0.0),
+                        Visibility::default(),
+                    ))
                     .with_children(|pivot| {
                         // Manche courte
                         pivot.spawn((
                             Mesh3d(boite.clone()),
                             MeshMaterial3d(t_shirt.clone()),
-                            Transform::from_xyz(0.0, -0.06, 0.0).with_scale(Vec3::new(0.15, 0.16, 0.15)),
+                            Transform::from_xyz(0.0, -0.06, 0.0)
+                                .with_scale(Vec3::new(0.15, 0.16, 0.15)),
                         ));
                         pivot.spawn((
                             Mesh3d(bras.clone()),

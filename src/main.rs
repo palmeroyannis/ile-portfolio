@@ -1,8 +1,11 @@
 //! Portfolio jeu vidéo — une île à explorer, avec une fiche par projet.
 
 mod camera;
+mod decor;
 mod fiche;
+mod geo;
 mod joueur;
+mod lieux;
 mod monde;
 mod personnage;
 mod projets;
@@ -40,6 +43,8 @@ fn main() {
         .add_plugins((
             rendu::RenduPlugin,
             monde::MondePlugin,
+            decor::DecorPlugin,
+            lieux::LieuxPlugin,
             joueur::JoueurPlugin,
             personnage::PersonnagePlugin,
             camera::CameraPlugin,

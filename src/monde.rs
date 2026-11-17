@@ -3,29 +3,27 @@
 
 use avian3d::prelude::*;
 use bevy::asset::RenderAssetUsages;
-use bevy::mesh::PrimitiveTopology;
+use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
-use crate::rendu::{
-    hasard, matiere_mate, texture_bois, texture_grain, texture_pierre, texture_terre_cuite,
-};
+use crate::rendu::{hasard, matiere_mate, texture_grain, texture_pierre, texture_sol};
 
 // --- Plan de l'île (x : est, z : sud ; unités : mètres) ---
 pub const PLACE: Vec2 = Vec2::new(0.0, 8.0);
 pub const COLLINE: Vec2 = Vec2::new(-20.0, -16.0); // Randolienne
 pub const POTAGER: Vec2 = Vec2::new(23.0, 4.0); // Smart Plant Pot
 pub const USINE: Vec2 = Vec2::new(16.0, -24.0); // Imprimante 3D
-const PLAGE_DEPART: Vec2 = Vec2::new(0.0, 33.0);
+pub const PLAGE_DEPART: Vec2 = Vec2::new(0.0, 33.0);
 
 const HAUTEUR_PLATEAU: f32 = 1.6;
 const HAUTEUR_COLLINE: f32 = 8.0;
-const RAYON_SOMMET: f32 = 3.5; // sommet plat de la colline
+pub const RAYON_SOMMET: f32 = 3.5; // sommet plat de la colline
 const RAYON_COLLINE: f32 = 19.0;
-const LARGEUR_CHEMIN: f32 = 1.4;
+pub const LARGEUR_CHEMIN: f32 = 1.4;
 
 // --- Maillage du terrain ---
 const TAILLE_TERRAIN: f32 = 130.0;
-const CASES: usize = 60; // 60 × 60 cases d'environ 2 m : les facettes se voient bien
+const CASES: usize = 130; // cases d'un mètre : côte et chemins aux contours réguliers
 
 pub struct MondePlugin;
 
@@ -85,7 +83,7 @@ fn distance_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 }
 
 /// Distance au chemin le plus proche.
-fn distance_chemin(p: Vec2) -> f32 {
+pub fn distance_chemin(p: Vec2) -> f32 {
     let pied_colline = COLLINE + (PLACE - COLLINE).normalize() * (RAYON_COLLINE - 2.0);
     [
         (PLAGE_DEPART, PLACE),
@@ -111,7 +109,8 @@ pub fn hauteur(x: f32, z: f32) -> f32 {
 
     let mut h = if vers_interieur > 0.0 {
         // Plage en pente douce, puis plateau
-        0.25 * lissage(0.0, 4.0, vers_interieur) + (HAUTEUR_PLATEAU - 0.25) * lissage(5.0, 12.0, vers_interieur)
+        0.25 * lissage(0.0, 4.0, vers_interieur)
+            + (HAUTEUR_PLATEAU - 0.25) * lissage(5.0, 12.0, vers_interieur)
     } else {
         // Fond marin
         (vers_interieur * 0.3).max(-3.0)
@@ -132,6 +131,20 @@ pub fn hauteur(x: f32, z: f32) -> f32 {
     h
 }
 
+/// Distance au centre de l'île où le terrain passe sous la surface de la mer, dans une direction donnée.
+pub fn rayon_cote(angle: f32) -> f32 {
+    let direction = Vec2::new(angle.cos(), angle.sin());
+    let mut r = 30.0;
+    while r < 64.0 {
+        let p = direction * r;
+        if hauteur(p.x, p.y) < crate::rendu::NIVEAU_MER {
+            return r;
+        }
+        r += 0.1;
+    }
+    r
+}
+
 // ---------------------------------------------------------------------------
 // Construction
 // ---------------------------------------------------------------------------
@@ -150,8 +163,6 @@ fn creer_monde(
     creer_terrain(&mut commands, &mut meshes, &mut images, &mut materials);
 
     let pierre = images.add(texture_pierre());
-    let brique = images.add(texture_terre_cuite());
-    let bois = images.add(texture_bois());
     let grain = images.add(texture_grain());
 
     let mut uni = |r: f32, g: f32, b: f32| {
@@ -165,37 +176,45 @@ fn creer_monde(
     };
     let metal = uni(0.80, 0.82, 0.85);
     let metal_sombre = uni(0.35, 0.38, 0.42);
-    let terre = uni(0.45, 0.30, 0.18);
     let feuillage = uni(0.22, 0.62, 0.20);
-    let tronc = uni(0.55, 0.40, 0.25);
     let pot = uni(0.85, 0.45, 0.28);
-    let toit = uni(0.40, 0.45, 0.52);
     let or = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.82, 0.15),
         unlit: true,
         ..default()
     });
 
-    let mut texture = |image: &Handle<Image>, repetitions: Vec2| materials.add(matiere_mate(image.clone(), repetitions));
+    let mut texture = |image: &Handle<Image>, repetitions: Vec2| {
+        materials.add(matiere_mate(image.clone(), repetitions))
+    };
     let mat_pierre = texture(&pierre, Vec2::splat(1.0));
-    let mat_brique = texture(&brique, Vec2::new(5.0, 3.0));
-    let mat_bois = texture(&bois, Vec2::new(1.0, 6.0));
-    let mat_bois_court = texture(&bois, Vec2::splat(1.0));
-
-    // --- Ponton au sud ---
-    pave(&mut commands, &mut meshes, &mat_bois, Vec3::new(3.0, 0.3, 17.0), Vec3::new(0.0, 0.2, 45.5), Quat::IDENTITY, true);
-    for z in [40.0, 46.0, 52.0] {
-        for x in [-1.3, 1.3] {
-            pave(&mut commands, &mut meshes, &mat_bois_court, Vec3::new(0.35, 3.0, 0.35), Vec3::new(x, -0.9, z), Quat::IDENTITY, false);
-        }
-    }
 
     // --- Colline : emplacement de la Randolienne (mât + rotor provisoires) ---
     let sommet = sur_le_sol(COLLINE, 0.0);
-    pave(&mut commands, &mut meshes, &mat_pierre, Vec3::new(1.6, 0.4, 1.6), sommet + Vec3::Y * 0.2, Quat::IDENTITY, true);
-    pave(&mut commands, &mut meshes, &metal_sombre, Vec3::new(0.25, 3.2, 0.25), sommet + Vec3::Y * 2.0, Quat::IDENTITY, true);
+    pave(
+        &mut commands,
+        &mut meshes,
+        &mat_pierre,
+        Vec3::new(1.6, 0.4, 1.6),
+        sommet + Vec3::Y * 0.2,
+        Quat::IDENTITY,
+        true,
+    );
+    pave(
+        &mut commands,
+        &mut meshes,
+        &metal_sombre,
+        Vec3::new(0.25, 3.2, 0.25),
+        sommet + Vec3::Y * 2.0,
+        Quat::IDENTITY,
+        true,
+    );
     let rotor = commands
-        .spawn((Rotation(2.2), Transform::from_translation(sommet + Vec3::Y * 4.5), Visibility::default()))
+        .spawn((
+            Rotation(2.2),
+            Transform::from_translation(sommet + Vec3::Y * 4.5),
+            Visibility::default(),
+        ))
         .id();
     for i in 0..3 {
         let angle = i as f32 * std::f32::consts::TAU / 3.0;
@@ -203,71 +222,71 @@ fn creer_monde(
             .spawn((
                 Mesh3d(meshes.add(Cuboid::new(0.08, 1.8, 0.5))),
                 MeshMaterial3d(metal.clone()),
-                Transform::from_rotation(Quat::from_rotation_y(angle)).mul_transform(Transform::from_xyz(0.8, 0.0, 0.0)),
+                Transform::from_rotation(Quat::from_rotation_y(angle))
+                    .mul_transform(Transform::from_xyz(0.8, 0.0, 0.0)),
             ))
             .id();
         commands.entity(rotor).add_child(pale);
     }
 
-    // --- Potager : emplacement du Smart Plant Pot ---
+    // --- Potager : socle et pot provisoires du Smart Plant Pot ---
     let centre = sur_le_sol(POTAGER, 0.0);
-    for i in 0..4 {
-        let z = -3.0 + 2.0 * i as f32;
-        pave(&mut commands, &mut meshes, &terre, Vec3::new(7.0, 0.3, 1.1), centre + Vec3::new(2.5, 0.1, z), Quat::IDENTITY, true);
-        // Rangée de plants
-        for j in 0..6 {
-            pave(
-                &mut commands,
-                &mut meshes,
-                &feuillage,
-                Vec3::new(0.45, 0.45, 0.45),
-                centre + Vec3::new(-0.3 + 1.1 * j as f32, 0.45, z),
-                Quat::from_rotation_y(0.6 * (i + j) as f32),
-                false,
-            );
-        }
-    }
-    // Clôture basse sur trois côtés
-    pave(&mut commands, &mut meshes, &mat_bois_court, Vec3::new(9.0, 0.7, 0.15), centre + Vec3::new(2.5, 0.35, -4.4), Quat::IDENTITY, true);
-    pave(&mut commands, &mut meshes, &mat_bois_court, Vec3::new(9.0, 0.7, 0.15), centre + Vec3::new(2.5, 0.35, 4.4), Quat::IDENTITY, true);
-    pave(&mut commands, &mut meshes, &mat_bois_court, Vec3::new(0.15, 0.7, 8.8), centre + Vec3::new(7.0, 0.35, 0.0), Quat::IDENTITY, true);
     // Socle et pot provisoire
     let socle_pot = centre + Vec3::new(-3.5, 0.0, 0.0);
-    pave(&mut commands, &mut meshes, &mat_pierre, Vec3::new(1.0, 0.8, 1.0), socle_pot + Vec3::Y * 0.4, Quat::IDENTITY, true);
+    pave(
+        &mut commands,
+        &mut meshes,
+        &mat_pierre,
+        Vec3::new(1.0, 0.8, 1.0),
+        socle_pot + Vec3::Y * 0.4,
+        Quat::IDENTITY,
+        true,
+    );
     commands.spawn((
         Mesh3d(meshes.add(Cylinder::new(0.3, 0.5).mesh().resolution(8))),
         MeshMaterial3d(pot.clone()),
         Transform::from_translation(socle_pot + Vec3::Y * 1.05),
     ));
-    pave(&mut commands, &mut meshes, &feuillage, Vec3::new(0.35, 0.4, 0.35), socle_pot + Vec3::Y * 1.45, Quat::from_rotation_y(0.5), false);
+    pave(
+        &mut commands,
+        &mut meshes,
+        &feuillage,
+        Vec3::new(0.35, 0.4, 0.35),
+        socle_pot + Vec3::Y * 1.45,
+        Quat::from_rotation_y(0.5),
+        false,
+    );
 
-    // --- Usine : emplacement de l'imprimante 3D ---
+    // --- Usine : socle et « imprimante » provisoires devant l'entrée ---
     let base = sur_le_sol(USINE, 0.0);
-    pave(&mut commands, &mut meshes, &mat_brique, Vec3::new(12.0, 5.0, 8.0), base + Vec3::new(0.0, 2.5, -2.0), Quat::IDENTITY, true);
-    // Toit en dents de scie
-    for i in 0..3 {
-        pave(
-            &mut commands,
-            &mut meshes,
-            &toit,
-            Vec3::new(4.2, 0.25, 8.2),
-            base + Vec3::new(-4.0 + 4.0 * i as f32, 5.6, -2.0),
-            Quat::from_rotation_z(0.38),
-            false,
-        );
-    }
-    // Cheminée
-    pave(&mut commands, &mut meshes, &mat_brique, Vec3::new(1.2, 9.0, 1.2), base + Vec3::new(4.5, 4.5, -4.5), Quat::IDENTITY, true);
-    // Porte
-    pave(&mut commands, &mut meshes, &metal_sombre, Vec3::new(2.4, 3.0, 0.2), base + Vec3::new(-2.0, 1.5, 2.05), Quat::IDENTITY, false);
     // Socle devant l'entrée, avec une « imprimante » provisoire
     let socle_usine = base + Vec3::new(2.5, 0.0, 5.0);
-    pave(&mut commands, &mut meshes, &mat_pierre, Vec3::new(1.4, 0.6, 1.4), socle_usine + Vec3::Y * 0.3, Quat::IDENTITY, true);
-    pave(&mut commands, &mut meshes, &metal, Vec3::new(0.8, 0.8, 0.8), socle_usine + Vec3::Y * 1.0, Quat::IDENTITY, false);
+    pave(
+        &mut commands,
+        &mut meshes,
+        &mat_pierre,
+        Vec3::new(1.4, 0.6, 1.4),
+        socle_usine + Vec3::Y * 0.3,
+        Quat::IDENTITY,
+        true,
+    );
+    pave(
+        &mut commands,
+        &mut meshes,
+        &metal,
+        Vec3::new(0.8, 0.8, 0.8),
+        socle_usine + Vec3::Y * 1.0,
+        Quat::IDENTITY,
+        false,
+    );
 
     // --- Repères dorés au-dessus de chaque projet ---
     let repere = meshes.add(Sphere::new(0.35).mesh().ico(0).unwrap());
-    let emplacements = [sommet + Vec3::new(2.0, 2.2, 2.0), socle_pot + Vec3::Y * 2.6, socle_usine + Vec3::Y * 2.4];
+    let emplacements = [
+        sommet + Vec3::new(2.0, 2.2, 2.0),
+        socle_pot + Vec3::Y * 2.6,
+        socle_usine + Vec3::Y * 2.4,
+    ];
     for (projet, position) in emplacements.into_iter().enumerate() {
         commands.spawn((
             Repere {
@@ -280,52 +299,10 @@ fn creer_monde(
             Transform::from_translation(position).with_scale(Vec3::new(1.0, 1.5, 1.0)),
         ));
     }
-
-    // --- Palmiers ---
-    let palmiers = [
-        Vec2::new(-8.0, 31.0),
-        Vec2::new(9.0, 30.0),
-        Vec2::new(27.0, 22.0),
-        Vec2::new(34.0, 8.0),
-        Vec2::new(33.0, -12.0),
-        Vec2::new(4.0, -33.0),
-        Vec2::new(-14.0, -36.0),
-        Vec2::new(-36.0, 2.0),
-        Vec2::new(-30.0, 18.0),
-        Vec2::new(-20.0, 27.0),
-        Vec2::new(8.0, 14.0),
-        Vec2::new(-9.0, 2.0),
-    ];
-    let mesh_tronc = meshes.add(Cylinder::new(0.22, 5.0).mesh().resolution(6));
-    let mesh_palme = meshes.add(Cuboid::new(0.9, 0.06, 2.6));
-    for (i, p) in palmiers.into_iter().enumerate() {
-        let pied = sur_le_sol(p, 0.0);
-        let penche = Quat::from_rotation_y(i as f32 * 1.7) * Quat::from_rotation_z(0.12);
-        commands
-            .spawn((
-                Mesh3d(mesh_tronc.clone()),
-                MeshMaterial3d(tronc.clone()),
-                Transform::from_translation(pied + Vec3::Y * 2.4).with_rotation(penche),
-                RigidBody::Static,
-                Collider::cylinder(0.25, 5.0),
-            ))
-            .with_children(|arbre| {
-                for k in 0..6 {
-                    let autour = Quat::from_rotation_y(k as f32 * std::f32::consts::TAU / 6.0);
-                    arbre.spawn((
-                        Mesh3d(mesh_palme.clone()),
-                        MeshMaterial3d(feuillage.clone()),
-                        Transform::from_translation(Vec3::Y * 2.5)
-                            .with_rotation(autour * Quat::from_rotation_x(0.55))
-                            .mul_transform(Transform::from_xyz(0.0, 0.0, 1.3)),
-                    ));
-                }
-            });
-    }
 }
 
 /// Pose un pavé ; `solide` décide si le personnage bute dessus.
-fn pave(
+pub fn pave(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     matiere: &Handle<StandardMaterial>,
@@ -340,8 +317,54 @@ fn pave(
         Transform::from_translation(position).with_rotation(rotation),
     ));
     if solide {
-        volume.insert((RigidBody::Static, Collider::cuboid(taille.x, taille.y, taille.z)));
+        volume.insert((
+            RigidBody::Static,
+            Collider::cuboid(taille.x, taille.y, taille.z),
+        ));
     }
+}
+
+/// Couleur du fond sous l'eau : sable clair près du bord, vert d'eau puis bleu profond.
+fn fond_marin(y: f32) -> [f32; 3] {
+    let profondeur = ((crate::rendu::NIVEAU_MER - y) / 2.6).clamp(0.0, 1.0);
+    let clair = Vec3::new(0.86, 0.80, 0.60);
+    let moyen = Vec3::new(0.52, 0.72, 0.62);
+    let fonce = Vec3::new(0.16, 0.38, 0.50);
+    let c = if profondeur < 0.4 {
+        clair.lerp(moyen, profondeur / 0.4)
+    } else {
+        moyen.lerp(fonce, (profondeur - 0.4) / 0.6)
+    };
+    couleur(c.x, c.y, c.z)
+}
+
+/// Couleur du sol en un point : mélange doux entre sable, herbe, roche et chemin.
+fn couleur_sol(x: f32, z: f32, h: f32, normale: Vec3) -> [f32; 3] {
+    let v = |c: [f32; 3]| Vec3::from_array(c);
+    if h < crate::rendu::NIVEAU_MER {
+        return fond_marin(h);
+    }
+    let sable = v(couleur(0.93, 0.82, 0.56));
+    let sable_mouille = v(couleur(0.80, 0.71, 0.50));
+    let roche = v(couleur(0.56, 0.53, 0.48));
+    let chemin = v(couleur(0.78, 0.62, 0.40));
+    // Deux verts qui alternent en grandes taches, pour casser l'uniformité
+    let tache = bruit(x * 0.08 + 7.0, z * 0.08 - 3.0);
+    let herbe = v(couleur(0.30, 0.66, 0.22)).lerp(v(couleur(0.40, 0.70, 0.26)), tache);
+
+    let mut c = sable_mouille.lerp(sable, lissage(crate::rendu::NIVEAU_MER, 0.2, h));
+    c = c.lerp(herbe, lissage(0.75, 1.15, h));
+    c = c.lerp(roche, lissage(0.86, 0.70, normale.y));
+    if h > 0.5 {
+        let d = distance_chemin(Vec2::new(x, z));
+        c = c.lerp(
+            chemin,
+            1.0 - lissage(LARGEUR_CHEMIN - 0.35, LARGEUR_CHEMIN + 0.35, d),
+        );
+    }
+    // Légères variations de luminosité, douces
+    let variation = 0.94 + 0.12 * bruit(x * 0.3 - 11.0, z * 0.3 + 5.0);
+    (c * variation).to_array()
 }
 
 fn creer_terrain(
@@ -354,76 +377,61 @@ fn creer_terrain(
     let pas = TAILLE_TERRAIN / CASES as f32;
     let moitie = TAILLE_TERRAIN / 2.0;
 
-    // Grille de points
+    // Grille de points partagés : l'éclairage et les couleurs sont lissés d'un point à l'autre,
+    // on ne voit plus les triangles du sol.
     let mut points = Vec::with_capacity(n * n);
+    let mut normales = Vec::with_capacity(n * n);
+    let mut couleurs = Vec::with_capacity(n * n);
+    let mut uvs = Vec::with_capacity(n * n);
     for j in 0..n {
         for i in 0..n {
             let x = -moitie + i as f32 * pas;
             let z = -moitie + j as f32 * pas;
-            points.push(Vec3::new(x, hauteur(x, z), z));
+            let h = hauteur(x, z);
+            let e = 0.5;
+            let normale = Vec3::new(
+                hauteur(x - e, z) - hauteur(x + e, z),
+                2.0 * e,
+                hauteur(x, z - e) - hauteur(x, z + e),
+            )
+            .normalize();
+            let c = couleur_sol(x, z, h, normale);
+            points.push(Vec3::new(x, h, z));
+            normales.push(normale.to_array());
+            couleurs.push([c[0], c[1], c[2], 1.0]);
+            uvs.push([x / 3.0, z / 3.0]);
         }
     }
 
-    // Triangles. Pour l'affichage, chaque triangle a ses propres sommets :
-    // une seule couleur et une seule normale par facette, donc des arêtes bien visibles.
-    let sable = couleur(0.93, 0.82, 0.56);
-    let sable_mouille = couleur(0.80, 0.72, 0.52);
-    let herbe = couleur(0.33, 0.70, 0.26);
-    let roche = couleur(0.56, 0.53, 0.48);
-    let chemin = couleur(0.80, 0.64, 0.42);
-
     let mut triangles: Vec<[u32; 3]> = Vec::with_capacity(CASES * CASES * 2);
-    let mut positions: Vec<[f32; 3]> = Vec::new();
-    let mut normales: Vec<[f32; 3]> = Vec::new();
-    let mut couleurs: Vec<[f32; 4]> = Vec::new();
-    let mut uvs: Vec<[f32; 2]> = Vec::new();
-
     for j in 0..CASES {
         for i in 0..CASES {
             let a = (j * n + i) as u32;
             let b = a + 1;
             let c = a + n as u32;
             let d = c + 1;
-            for (numero, triangle) in [[a, c, b], [b, c, d]].into_iter().enumerate() {
-                triangles.push(triangle);
-                let [p0, p1, p2] = triangle.map(|k| points[k as usize]);
-                let normale = (p1 - p0).cross(p2 - p0).normalize();
-                let milieu = (p0 + p1 + p2) / 3.0;
-
-                let base = if distance_chemin(milieu.xz()) < LARGEUR_CHEMIN && milieu.y > 0.5 {
-                    chemin
-                } else if normale.y < 0.80 {
-                    roche
-                } else if milieu.y < 0.0 {
-                    sable_mouille
-                } else if milieu.y < 0.9 {
-                    sable
-                } else {
-                    herbe
-                };
-                // Légère variation d'une facette à l'autre
-                let nuance = 0.92 + 0.16 * hasard(i as u32, j as u32, 10 + numero as u32);
-
-                for p in [p0, p1, p2] {
-                    positions.push(p.to_array());
-                    normales.push(normale.to_array());
-                    couleurs.push([base[0] * nuance, base[1] * nuance, base[2] * nuance, 1.0]);
-                    uvs.push([p.x / 4.0, p.z / 4.0]);
-                }
-            }
+            triangles.push([a, c, b]);
+            triangles.push([b, c, d]);
         }
     }
 
-    let maillage = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normales)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, couleurs)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    let maillage = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        points.iter().map(|p| p.to_array()).collect::<Vec<_>>(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normales)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, couleurs)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_indices(Indices::U32(triangles.iter().flatten().copied().collect()));
 
     commands.spawn((
         Mesh3d(meshes.add(maillage)),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color_texture: Some(images.add(texture_grain())),
+            base_color_texture: Some(images.add(texture_sol())),
             perceptual_roughness: 1.0,
             reflectance: 0.0,
             ..default()

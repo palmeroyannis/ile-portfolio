@@ -21,8 +21,10 @@ pub struct JoueurPlugin;
 
 impl Plugin for JoueurPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, creer_joueur)
-            .add_systems(Update, (deplacer_joueur, orienter_joueur, reapparaitre, placer_ombre).chain());
+        app.add_systems(Startup, creer_joueur).add_systems(
+            Update,
+            (deplacer_joueur, orienter_joueur, reapparaitre, placer_ombre).chain(),
+        );
     }
 }
 
@@ -86,8 +88,13 @@ fn creer_joueur(
             Friction::ZERO.with_combine_rule(CoefficientCombine::Min),
             Restitution::ZERO.with_combine_rule(CoefficientCombine::Min),
             // Détection du sol : une petite sphère lancée vers le bas depuis le centre
-            ShapeCaster::new(Collider::sphere(RAYON * 0.9), Vec3::ZERO, Quat::IDENTITY, Dir3::NEG_Y)
-                .with_max_distance(demi_hauteur - RAYON * 0.9 + 0.15),
+            ShapeCaster::new(
+                Collider::sphere(RAYON * 0.9),
+                Vec3::ZERO,
+                Quat::IDENTITY,
+                Dir3::NEG_Y,
+            )
+            .with_max_distance(demi_hauteur - RAYON * 0.9 + 0.15),
             // Mouvement fluide entre deux pas de calcul de la physique
             TransformInterpolation,
         ))
@@ -148,7 +155,11 @@ fn deplacer_joueur(
         // Au sol si la sphère de détection touche une surface pas trop pentue
         let au_sol = contacts.iter().any(|contact| contact.normal1.y > 0.6);
 
-        joueur.temps_depuis_sol = if au_sol { 0.0 } else { joueur.temps_depuis_sol + dt };
+        joueur.temps_depuis_sol = if au_sol {
+            0.0
+        } else {
+            joueur.temps_depuis_sol + dt
+        };
         joueur.temps_depuis_appui_saut = if saut_appuye {
             0.0
         } else {
@@ -172,14 +183,19 @@ fn deplacer_joueur(
 
         // Vitesse horizontale : on se rapproche de la vitesse voulue
         let cible = direction * VITESSE;
-        let acceleration = if au_sol { ACCELERATION_SOL } else { ACCELERATION_AIR };
+        let acceleration = if au_sol {
+            ACCELERATION_SOL
+        } else {
+            ACCELERATION_AIR
+        };
         let horizontale = Vec2::new(vitesse.x, vitesse.z)
             .move_towards(Vec2::new(cible.x, cible.z), acceleration * dt);
         vitesse.x = horizontale.x;
         vitesse.z = horizontale.y;
 
         // Saut
-        if joueur.temps_depuis_appui_saut < MEMOIRE_SAUT && joueur.temps_depuis_sol < TOLERANCE_SAUT {
+        if joueur.temps_depuis_appui_saut < MEMOIRE_SAUT && joueur.temps_depuis_sol < TOLERANCE_SAUT
+        {
             vitesse.y = VITESSE_SAUT;
             joueur.temps_depuis_appui_saut = 1.0;
             joueur.temps_depuis_sol = 1.0;
@@ -227,7 +243,13 @@ fn placer_ombre(
     let (mut transform, mut visibilite) = ombre.into_inner();
 
     let filtre = SpatialQueryFilter::from_excluded_entities([entite]);
-    match recherche.cast_ray(position.translation, Dir3::NEG_Y, PORTEE_OMBRE, true, &filtre) {
+    match recherche.cast_ray(
+        position.translation,
+        Dir3::NEG_Y,
+        PORTEE_OMBRE,
+        true,
+        &filtre,
+    ) {
         Some(contact) => {
             let point = position.translation + Vec3::NEG_Y * contact.distance;
             // Légèrement au-dessus de la surface pour éviter le scintillement

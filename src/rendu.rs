@@ -12,9 +12,10 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 pub const COULEUR_HORIZON: Color = Color::srgb(0.72, 0.88, 0.98);
 const COULEUR_ZENITH: [f32; 3] = [0.10, 0.36, 0.86];
 const COULEUR_HORIZON_RGB: [f32; 3] = [0.72, 0.88, 0.98];
-const NIVEAU_MER: f32 = -0.35;
+pub const NIVEAU_MER: f32 = -0.35;
 const TAILLE_MER: f32 = 900.0;
 const REPETITIONS_MER: f32 = 150.0; // nombre de répétitions de la texture d'eau
+const OPACITE_MER: f32 = 0.62; // 0 = invisible, 1 = opaque
 const VITESSE_MER: Vec2 = Vec2::new(0.035, 0.02); // défilement, en répétitions par seconde
 
 pub struct RenduPlugin;
@@ -65,17 +66,31 @@ fn creer_decor(
         Transform::from_xyz(3.0, 10.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
-    // Mer : un simple plan avec une texture qui défile
+    // Mer : un plan transparent avec une texture qui défile. On voit le fond à travers :
+    // turquoise clair au-dessus du sable, bleu profond au large.
     commands.spawn((
         Mer,
         Mesh3d(meshes.add(Plane3d::default().mesh().size(TAILLE_MER, TAILLE_MER))),
         MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 1.0, 1.0, OPACITE_MER),
             base_color_texture: Some(images.add(texture_eau())),
+            alpha_mode: AlphaMode::Blend,
             unlit: true,
             uv_transform: Affine2::from_scale(Vec2::splat(REPETITIONS_MER)),
             ..default()
         })),
         Transform::from_xyz(0.0, NIVEAU_MER, 0.0),
+    ));
+
+    // Fond du large, au-delà du terrain de l'île
+    commands.spawn((
+        Mesh3d(meshes.add(Plane3d::default().mesh().size(TAILLE_MER, TAILLE_MER))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.16, 0.38, 0.50),
+            unlit: true,
+            ..default()
+        })),
+        Transform::from_xyz(0.0, -3.05, 0.0),
     ));
 
     // Ciel : une grande sphère vue de l'intérieur, dégradé du zénith à l'horizon
@@ -86,7 +101,9 @@ fn creer_decor(
             .map(|p| {
                 // 0 à l'horizon (et dessous), 1 au zénith
                 let t = (p[1] / 450.0).clamp(0.0, 1.0).powf(0.6);
-                let melange = |k: usize| COULEUR_HORIZON_RGB[k] + (COULEUR_ZENITH[k] - COULEUR_HORIZON_RGB[k]) * t;
+                let melange = |k: usize| {
+                    COULEUR_HORIZON_RGB[k] + (COULEUR_ZENITH[k] - COULEUR_HORIZON_RGB[k]) * t
+                };
                 // Les couleurs par sommet sont attendues en valeurs « linéaires »
                 let c = Color::srgb(melange(0), melange(1), melange(2)).to_linear();
                 [c.red, c.green, c.blue, 1.0]
@@ -173,7 +190,9 @@ fn centrer_ciel(
 
 /// Nombre pseudo-aléatoire entre 0 et 1, toujours le même pour un pixel donné.
 pub fn hasard(x: u32, y: u32, graine: u32) -> f32 {
-    let mut n = x.wrapping_mul(374_761_393) ^ y.wrapping_mul(668_265_263) ^ graine.wrapping_mul(2_246_822_519);
+    let mut n = x.wrapping_mul(374_761_393)
+        ^ y.wrapping_mul(668_265_263)
+        ^ graine.wrapping_mul(2_246_822_519);
     n = (n ^ (n >> 13)).wrapping_mul(1_274_126_177);
     n ^= n >> 16;
     (n & 0xFFFF) as f32 / 65_535.0
@@ -216,8 +235,16 @@ fn image_depuis(taille: u32, pixel: impl Fn(u32, u32) -> [f32; 3]) -> Image {
 pub fn texture_sable() -> Image {
     image_depuis(32, |x, y| {
         let grain = hasard(x, y, 1) * 0.10 - 0.05;
-        let tache = if hasard(x / 4, y / 4, 2) > 0.8 { -0.04 } else { 0.0 };
-        [0.94 + grain + tache, 0.83 + grain + tache, 0.56 + grain * 0.8 + tache]
+        let tache = if hasard(x / 4, y / 4, 2) > 0.8 {
+            -0.04
+        } else {
+            0.0
+        };
+        [
+            0.94 + grain + tache,
+            0.83 + grain + tache,
+            0.56 + grain * 0.8 + tache,
+        ]
     })
 }
 
@@ -243,7 +270,11 @@ pub fn texture_terre_cuite() -> Image {
         if joint {
             [0.80, 0.72, 0.60]
         } else {
-            [0.82 + brique + grain, 0.40 + brique * 0.5 + grain, 0.24 + grain]
+            [
+                0.82 + brique + grain,
+                0.40 + brique * 0.5 + grain,
+                0.24 + grain,
+            ]
         }
     })
 }
@@ -256,6 +287,17 @@ pub fn texture_grain() -> Image {
     })
 }
 
+/// Détail du sol : un grain gris clair à deux échelles, multiplié par les couleurs du terrain.
+pub fn texture_sol() -> Image {
+    image_depuis(64, |x, y| {
+        let fin = hasard(x, y, 13);
+        let moyen = hasard(x / 4, y / 4, 14);
+        let v = 0.80 + 0.12 * fin + 0.08 * moyen;
+        [v, v, v]
+    })
+}
+
+#[allow(dead_code)]
 pub fn texture_bois() -> Image {
     image_depuis(32, |x, y| {
         // Planches de 8 pixels de large
@@ -274,8 +316,16 @@ pub fn texture_bois() -> Image {
 pub fn texture_herbe() -> Image {
     image_depuis(32, |x, y| {
         let grain = hasard(x, y, 7) * 0.14 - 0.07;
-        let touffe = if hasard(x / 2, y / 3, 8) > 0.75 { 0.06 } else { 0.0 };
-        [0.26 + grain * 0.5, 0.68 + grain + touffe, 0.22 + grain * 0.4]
+        let touffe = if hasard(x / 2, y / 3, 8) > 0.75 {
+            0.06
+        } else {
+            0.0
+        };
+        [
+            0.26 + grain * 0.5,
+            0.68 + grain + touffe,
+            0.22 + grain * 0.4,
+        ]
     })
 }
 
@@ -293,9 +343,9 @@ fn texture_eau() -> Image {
         let ecume = (1.0 - (onde.abs() * 2.2)).clamp(0.0, 1.0);
         let fond = 0.5 + 0.5 * (TAU * (u * 1.0 - v * 2.0)).sin();
         [
-            0.04 + 0.05 * fond + 0.40 * ecume,
-            0.68 + 0.07 * fond + 0.20 * ecume,
-            0.74 + 0.06 * fond + 0.16 * ecume,
+            0.10 + 0.06 * fond + 0.55 * ecume,
+            0.78 + 0.06 * fond + 0.20 * ecume,
+            0.80 + 0.05 * fond + 0.18 * ecume,
         ]
     })
 }
