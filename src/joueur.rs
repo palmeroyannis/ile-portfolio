@@ -30,6 +30,8 @@ impl Plugin for JoueurPlugin {
 pub struct Joueur {
     /// Commande de déplacement en cours (x : gauche/droite, y : arrière/avant), lue par la caméra
     pub commande: Vec2,
+    /// Vrai quand le personnage touche le sol (lu par l'animation)
+    pub au_sol: bool,
     temps_depuis_sol: f32,
     temps_depuis_appui_saut: f32,
     direction_voulue: Vec3,
@@ -44,26 +46,13 @@ const PORTEE_OMBRE: f32 = 12.0; // au-delà de cette hauteur, plus d'ombre
 
 /// La partie visible du personnage (tourne vers la direction de marche).
 #[derive(Component)]
-struct Apparence;
+pub struct Apparence;
 
 fn creer_joueur(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let corps = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.95, 0.95, 0.92),
-        perceptual_roughness: 1.0,
-        reflectance: 0.0,
-        ..default()
-    });
-    let visage = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.10, 0.25, 0.55),
-        perceptual_roughness: 1.0,
-        reflectance: 0.0,
-        ..default()
-    });
-
     let demi_hauteur = HAUTEUR_CYLINDRE / 2.0 + RAYON;
 
     commands.spawn((
@@ -82,6 +71,7 @@ fn creer_joueur(
         .spawn((
             Joueur {
                 commande: Vec2::ZERO,
+                au_sol: false,
                 temps_depuis_sol: 1.0,
                 temps_depuis_appui_saut: 1.0,
                 direction_voulue: Vec3::ZERO,
@@ -102,20 +92,7 @@ fn creer_joueur(
             TransformInterpolation,
         ))
         .with_children(|parent| {
-            parent
-                .spawn((Apparence, Transform::default(), Visibility::default()))
-                .with_children(|apparence| {
-                    apparence.spawn((
-                        Mesh3d(meshes.add(Capsule3d::new(RAYON, HAUTEUR_CYLINDRE).mesh().longitudes(10).latitudes(4))),
-                        MeshMaterial3d(corps),
-                    ));
-                    // Une « visière » pour voir de quel côté il regarde
-                    apparence.spawn((
-                        Mesh3d(meshes.add(Cuboid::new(0.42, 0.16, 0.2))),
-                        MeshMaterial3d(visage),
-                        Transform::from_xyz(0.0, 0.45, -RAYON),
-                    ));
-                });
+            crate::personnage::construire(parent, &mut meshes, &mut materials);
         });
 }
 
@@ -179,6 +156,7 @@ fn deplacer_joueur(
         };
         joueur.direction_voulue = direction;
         joueur.commande = commande;
+        joueur.au_sol = au_sol;
 
         // À l'arrêt sur le sol, le personnage accroche : il ne glisse pas dans les pentes.
         // En mouvement, aucun frottement : il ne colle pas aux murs.
