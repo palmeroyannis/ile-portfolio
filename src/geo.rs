@@ -179,6 +179,36 @@ impl Constructeur {
         points
     }
 
+    /// Occlusion ambiante peinte : assombrit ce qui est proche du sol (pied des murs,
+    /// bas des troncs, base des rochers), comme si la lumière du ciel y arrivait moins.
+    pub fn assombrir_pres_du_sol(&mut self) {
+        for (p, c) in self.positions.iter().zip(self.couleurs.iter_mut()) {
+            let au_dessus = p[1] - crate::monde::hauteur(p[0], p[2]);
+            let t = (au_dessus / 1.3).clamp(0.0, 1.0);
+            let facteur = 0.62 + 0.38 * t * t * (3.0 - 2.0 * t);
+            c[0] *= facteur;
+            c[1] *= facteur;
+            c[2] *= facteur;
+        }
+    }
+
+    /// Recolore chaque face selon son orientation : `bas` pour les faces tournées vers le sol,
+    /// `haut` pour celles tournées vers le ciel (nuages).
+    #[allow(dead_code)]
+    pub fn colorer_selon_orientation(&mut self, bas: Color, haut: Color) {
+        let (b, h) = (bas.to_linear(), haut.to_linear());
+        for (n, c) in self.normales.iter().zip(self.couleurs.iter_mut()) {
+            let t = (n[1] * 0.5 + 0.5).clamp(0.0, 1.0);
+            let t = t * t * (3.0 - 2.0 * t);
+            *c = [
+                b.red + (h.red - b.red) * t,
+                b.green + (h.green - b.green) * t,
+                b.blue + (h.blue - b.blue) * t,
+                1.0,
+            ];
+        }
+    }
+
     pub fn construire(self) -> Mesh {
         Mesh::new(
             PrimitiveTopology::TriangleList,

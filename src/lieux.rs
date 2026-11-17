@@ -338,6 +338,7 @@ fn creer_usine(
         solide(commands, o(x, y, z), Vec3::splat(0.8), rotation);
     }
 
+    b.assombrir_pres_du_sol();
     commands.spawn((
         Mesh3d(meshes.add(b.construire())),
         MeshMaterial3d(simple.clone()),
@@ -561,10 +562,12 @@ fn creer_potager(
         );
     }
 
+    b.assombrir_pres_du_sol();
     commands.spawn((
         Mesh3d(meshes.add(b.construire())),
         MeshMaterial3d(simple.clone()),
     ));
+    feuilles.assombrir_pres_du_sol();
     commands.spawn((
         Mesh3d(meshes.add(feuilles.construire())),
         MeshMaterial3d(double.clone()),
@@ -681,6 +684,7 @@ fn creer_colline(
         true,
     );
 
+    b.assombrir_pres_du_sol();
     commands.spawn((
         Mesh3d(meshes.add(b.construire())),
         MeshMaterial3d(simple.clone()),

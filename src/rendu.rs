@@ -4,19 +4,32 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::math::Affine2;
-use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 // --- Réglages ---
-pub const COULEUR_HORIZON: Color = Color::srgb(0.72, 0.88, 0.98);
-const COULEUR_ZENITH: [f32; 3] = [0.10, 0.36, 0.86];
-const COULEUR_HORIZON_RGB: [f32; 3] = [0.72, 0.88, 0.98];
+pub const COULEUR_HORIZON: Color = Color::srgb(0.82, 0.92, 0.97);
 pub const NIVEAU_MER: f32 = -0.35;
-const TAILLE_MER: f32 = 900.0;
-const REPETITIONS_MER: f32 = 150.0; // nombre de répétitions de la texture d'eau
-const OPACITE_MER: f32 = 0.62; // 0 = invisible, 1 = opaque
+const METRES_PAR_MOTIF_MER: f32 = 6.0; // taille d'un motif de la texture d'eau
+/// Couleur et opacité de la mer selon la distance au centre de l'île :
+/// transparente et claire au bord, profonde et opaque au large.
+const DEGRADE_MER: [(f32, [f32; 3], f32); 7] = [
+    (0.0, [0.16, 1.0, 0.90], 0.58),
+    (42.0, [0.14, 0.98, 0.90], 0.60),
+    (52.0, [0.08, 0.90, 0.90], 0.70),
+    (70.0, [0.05, 0.74, 0.86], 0.83),
+    (120.0, [0.04, 0.56, 0.82], 0.93),
+    (260.0, [0.04, 0.40, 0.74], 1.0),
+    (2000.0, [0.03, 0.34, 0.70], 1.0),
+];
 const VITESSE_MER: Vec2 = Vec2::new(0.035, 0.02); // défilement, en répétitions par seconde
+
+/// Direction vers le soleil (unitaire) : au sud-ouest, à 43° au-dessus de l'horizon.
+/// En marchant de la plage vers l'intérieur de l'île (vers le nord), on a le soleil dans le dos :
+/// les façades qu'on regarde sont éclairées. On le voit en tournant la caméra vers la mer.
+pub fn direction_soleil() -> Vec3 {
+    Vec3::new(-0.55, 0.68, 0.48).normalize()
+}
 
 pub struct RenduPlugin;
 
@@ -24,8 +37,9 @@ impl Plugin for RenduPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ClearColor(COULEUR_HORIZON))
             .insert_resource(GlobalAmbientLight {
-                color: Color::srgb(0.85, 0.92, 1.0),
-                brightness: 450.0,
+                // Lumière diffuse du ciel, à peine chaude : les faces à l'ombre restent lisibles
+                color: Color::srgb(1.0, 0.97, 0.92),
+                brightness: 560.0,
                 ..default()
             })
             .add_systems(Startup, creer_decor)
@@ -59,24 +73,26 @@ fn creer_decor(
     // Soleil de midi. Pas d'ombres portées calculées : à l'époque, une simple ombre ronde sous le personnage.
     commands.spawn((
         DirectionalLight {
-            illuminance: 1_900.0,
+            // Soleil de midi, légèrement doré
+            color: Color::srgb(1.0, 0.96, 0.86),
+            illuminance: 3_200.0,
             shadow_maps_enabled: false,
             ..default()
         },
-        Transform::from_xyz(3.0, 10.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_translation(direction_soleil() * 10.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
-    // Mer : un plan transparent avec une texture qui défile. On voit le fond à travers :
-    // turquoise clair au-dessus du sable, bleu profond au large.
+    // Mer : un grand disque transparent dont la couleur passe du turquoise clair près de la plage
+    // au bleu profond vers l'horizon. On voit le fond à travers près de l'île.
     commands.spawn((
         Mer,
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(TAILLE_MER, TAILLE_MER))),
+        Mesh3d(meshes.add(maillage_mer())),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgba(1.0, 1.0, 1.0, OPACITE_MER),
+            base_color: Color::WHITE,
             base_color_texture: Some(images.add(texture_eau())),
             alpha_mode: AlphaMode::Blend,
             unlit: true,
-            uv_transform: Affine2::from_scale(Vec2::splat(REPETITIONS_MER)),
+            fog_enabled: false,
             ..default()
         })),
         Transform::from_xyz(0.0, NIVEAU_MER, 0.0),
@@ -84,38 +100,22 @@ fn creer_decor(
 
     // Fond du large, au-delà du terrain de l'île
     commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(TAILLE_MER, TAILLE_MER))),
+        Mesh3d(meshes.add(Plane3d::default().mesh().size(3000.0, 3000.0))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.16, 0.38, 0.50),
+            base_color: Color::srgb(0.10, 0.30, 0.50),
             unlit: true,
+            fog_enabled: false,
             ..default()
         })),
         Transform::from_xyz(0.0, -3.05, 0.0),
     ));
 
-    // Ciel : une grande sphère vue de l'intérieur, dégradé du zénith à l'horizon
-    let mut sphere = Sphere::new(450.0).mesh().uv(24, 12);
-    let couleurs: Vec<[f32; 4]> = match sphere.attribute(Mesh::ATTRIBUTE_POSITION) {
-        Some(VertexAttributeValues::Float32x3(positions)) => positions
-            .iter()
-            .map(|p| {
-                // 0 à l'horizon (et dessous), 1 au zénith
-                let t = (p[1] / 450.0).clamp(0.0, 1.0).powf(0.6);
-                let melange = |k: usize| {
-                    COULEUR_HORIZON_RGB[k] + (COULEUR_ZENITH[k] - COULEUR_HORIZON_RGB[k]) * t
-                };
-                // Les couleurs par sommet sont attendues en valeurs « linéaires »
-                let c = Color::srgb(melange(0), melange(1), melange(2)).to_linear();
-                [c.red, c.green, c.blue, 1.0]
-            })
-            .collect(),
-        _ => Vec::new(),
-    };
-    if !couleurs.is_empty() {
-        sphere.insert_attribute(Mesh::ATTRIBUTE_COLOR, couleurs);
-    }
+    // Ciel : une grande sphère vue de l'intérieur, peinte comme un ciel de Mario Sunshine
+    // (bleu profond, gros cumulus sur l'horizon, voiles légers plus haut)
+    let sphere = Sphere::new(450.0).mesh().uv(48, 24);
     let matiere_ciel = materials.add(StandardMaterial {
         base_color: Color::WHITE,
+        base_color_texture: Some(images.add(texture_ciel())),
         unlit: true,
         fog_enabled: false,
         cull_mode: None,
@@ -125,34 +125,9 @@ fn creer_decor(
         Ciel,
         Mesh3d(meshes.add(sphere)),
         MeshMaterial3d(matiere_ciel),
-        Transform::default(),
+        // La sphère est générée avec ses pôles sur l'axe Z : on la redresse (zénith en haut)
+        Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
     ));
-
-    // Nuages : des blocs blancs à facettes, loin dans le ciel
-    let nuage = meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap());
-    let blanc = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 1.0, 1.0),
-        unlit: true,
-        fog_enabled: false,
-        ..default()
-    });
-    let nuages = [
-        (Vec3::new(-180.0, 70.0, -260.0), Vec3::new(55.0, 16.0, 30.0)),
-        (Vec3::new(-140.0, 78.0, -250.0), Vec3::new(35.0, 20.0, 26.0)),
-        (Vec3::new(120.0, 90.0, -300.0), Vec3::new(70.0, 20.0, 34.0)),
-        (Vec3::new(170.0, 84.0, -280.0), Vec3::new(40.0, 14.0, 24.0)),
-        (Vec3::new(300.0, 65.0, 60.0), Vec3::new(60.0, 18.0, 32.0)),
-        (Vec3::new(-320.0, 75.0, 120.0), Vec3::new(65.0, 22.0, 36.0)),
-        (Vec3::new(40.0, 95.0, 330.0), Vec3::new(80.0, 20.0, 40.0)),
-        (Vec3::new(-60.0, 110.0, -340.0), Vec3::new(45.0, 14.0, 26.0)),
-    ];
-    for (position, taille) in nuages {
-        commands.spawn((
-            Mesh3d(nuage.clone()),
-            MeshMaterial3d(blanc.clone()),
-            Transform::from_translation(position).with_scale(taille),
-        ));
-    }
 }
 
 fn animer_mer(
@@ -167,8 +142,7 @@ fn animer_mer(
                 (VITESSE_MER.x * t).fract(),
                 (VITESSE_MER.y * t).fract() + 0.01 * (t * 0.7).sin(),
             );
-            matiere.uv_transform =
-                Affine2::from_scale_angle_translation(Vec2::splat(REPETITIONS_MER), 0.0, decalage);
+            matiere.uv_transform = Affine2::from_translation(decalage);
         }
     }
 }
@@ -342,10 +316,195 @@ fn texture_eau() -> Image {
         // Fines lignes claires là où les ondes se croisent
         let ecume = (1.0 - (onde.abs() * 2.2)).clamp(0.0, 1.0);
         let fond = 0.5 + 0.5 * (TAU * (u * 1.0 - v * 2.0)).sin();
-        [
-            0.10 + 0.06 * fond + 0.55 * ecume,
-            0.78 + 0.06 * fond + 0.20 * ecume,
-            0.80 + 0.05 * fond + 0.18 * ecume,
-        ]
+        // Presque blanche : la teinte vient du dégradé de la mer, la texture n'ajoute
+        // que les reflets clairs des vagues
+        let v = 0.80 + 0.05 * fond + 0.40 * ecume;
+        [v, v, v.min(1.0)]
     })
+}
+
+// ---------------------------------------------------------------------------
+// Mer et ciel
+// ---------------------------------------------------------------------------
+
+/// Disque de mer en anneaux concentriques, avec une couleur et une opacité par anneau.
+fn maillage_mer() -> Mesh {
+    use std::f32::consts::TAU;
+    let rayons = [
+        0.0, 20.0, 35.0, 42.0, 47.0, 52.0, 60.0, 70.0, 85.0, 100.0, 120.0, 150.0, 200.0, 260.0,
+        400.0, 700.0, 1200.0, 2000.0,
+    ];
+    let secteurs = 96;
+    let couleur = |r: f32| -> [f32; 4] {
+        let mut i = 0;
+        while i + 1 < DEGRADE_MER.len() - 1 && DEGRADE_MER[i + 1].0 < r {
+            i += 1;
+        }
+        let (r0, c0, a0) = DEGRADE_MER[i];
+        let (r1, c1, a1) = DEGRADE_MER[i + 1];
+        let t = ((r - r0) / (r1 - r0)).clamp(0.0, 1.0);
+        let t = t * t * (3.0 - 2.0 * t);
+        let c = Color::srgb(
+            c0[0] + (c1[0] - c0[0]) * t,
+            c0[1] + (c1[1] - c0[1]) * t,
+            c0[2] + (c1[2] - c0[2]) * t,
+        )
+        .to_linear();
+        [c.red, c.green, c.blue, a0 + (a1 - a0) * t]
+    };
+
+    let mut positions = Vec::new();
+    let mut normales = Vec::new();
+    let mut couleurs = Vec::new();
+    let mut uvs = Vec::new();
+    for r in rayons {
+        for k in 0..=secteurs {
+            let a = k as f32 / secteurs as f32 * TAU;
+            let (x, z) = (a.cos() * r, a.sin() * r);
+            positions.push([x, 0.0, z]);
+            normales.push([0.0, 1.0, 0.0]);
+            couleurs.push(couleur(r));
+            uvs.push([x / METRES_PAR_MOTIF_MER, z / METRES_PAR_MOTIF_MER]);
+        }
+    }
+    let ligne = (secteurs + 1) as u32;
+    let mut indices = Vec::new();
+    for anneau in 0..(rayons.len() as u32 - 1) {
+        for k in 0..secteurs as u32 {
+            let a = anneau * ligne + k;
+            let b = a + 1;
+            let c = a + ligne + 1;
+            let d = a + ligne;
+            // Faces tournées vers le haut
+            indices.extend_from_slice(&[a, b, c, a, c, d]);
+        }
+    }
+    Mesh::new(
+        bevy::mesh::PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normales)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, couleurs)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_indices(bevy::mesh::Indices::U32(indices))
+}
+
+/// Bruit doux en 3D (valeurs au hasard sur une grille, interpolées), entre 0 et 1.
+fn bruit3(p: Vec3, graine: u32) -> f32 {
+    let base = p.floor();
+    let f = p - base;
+    let f = f * f * (Vec3::splat(3.0) - 2.0 * f);
+    let h = |dx: f32, dy: f32, dz: f32| {
+        let x = (base.x + dx + 4096.0) as u32;
+        let y = (base.y + dy + 4096.0) as u32;
+        let z = (base.z + dz + 4096.0) as u32;
+        hasard(x, y, z.wrapping_mul(7919).wrapping_add(graine))
+    };
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let x00 = lerp(h(0., 0., 0.), h(1., 0., 0.), f.x);
+    let x10 = lerp(h(0., 1., 0.), h(1., 1., 0.), f.x);
+    let x01 = lerp(h(0., 0., 1.), h(1., 0., 1.), f.x);
+    let x11 = lerp(h(0., 1., 1.), h(1., 1., 1.), f.x);
+    lerp(lerp(x00, x10, f.y), lerp(x01, x11, f.y), f.z)
+}
+
+/// Somme de bruits de plus en plus fins : des formes « nuageuses ».
+fn fbm(p: Vec3, graine: u32) -> f32 {
+    fbm_n(p, graine, 5)
+}
+
+fn fbm_n(p: Vec3, graine: u32, octaves: u32) -> f32 {
+    let (mut total, mut amplitude, mut frequence, mut somme) = (0.0, 0.5, 1.0, 0.0);
+    for octave in 0..octaves {
+        total += amplitude * bruit3(p * frequence, graine + octave * 101);
+        somme += amplitude;
+        amplitude *= 0.5;
+        frequence *= 2.03;
+    }
+    total / somme
+}
+
+fn lisse(a: f32, b: f32, x: f32) -> f32 {
+    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Texture du ciel (projection équirectangulaire : horizontalement le tour complet,
+/// verticalement du zénith en haut au nadir en bas). Calculée une fois au démarrage.
+fn texture_ciel() -> Image {
+    use std::f32::consts::{FRAC_PI_2, TAU};
+    let (largeur, hauteur) = (1024_u32, 512_u32);
+    let zenith = Vec3::new(0.10, 0.42, 0.86);
+    let milieu = Vec3::new(0.30, 0.62, 0.95);
+    let horizon = Vec3::new(0.78, 0.90, 0.97);
+    let blanc = Vec3::new(1.0, 1.0, 1.0);
+    let ombre_nuage = Vec3::new(0.68, 0.77, 0.90);
+
+    let mut donnees = Vec::with_capacity((largeur * hauteur * 4) as usize);
+    for y in 0..hauteur {
+        let v = (y as f32 + 0.5) / hauteur as f32;
+        // Élévation : 1 au zénith, 0 à l'horizon, négatif en dessous
+        let e = 1.0 - 2.0 * v;
+        for x in 0..largeur {
+            let couleur = if e <= 0.0 {
+                horizon
+            } else {
+                let u = (x as f32 + 0.5) / largeur as f32;
+                let a = u * TAU;
+                // Coordonnées sur un cylindre : la texture se raccorde sans couture
+                let (cx, cz) = (a.cos(), a.sin());
+                let angle = e * FRAC_PI_2;
+
+                // Dégradé : bleu profond en haut, très clair à l'horizon
+                let t = e.powf(0.55);
+                let mut c = if t < 0.5 {
+                    horizon.lerp(milieu, t / 0.5)
+                } else {
+                    milieu.lerp(zenith, (t - 0.5) / 0.5)
+                };
+
+                // Voiles légers et étirés, plus haut dans le ciel
+                let cirrus = fbm(Vec3::new(cx * 2.2, angle * 9.0, cz * 2.2), 7);
+                let zone_cirrus = lisse(0.10, 0.30, e) * (1.0 - lisse(0.75, 0.95, e));
+                let a_cirrus = lisse(0.55, 0.78, cirrus) * 0.55 * zone_cirrus;
+                c = c.lerp(blanc, a_cirrus);
+
+                // Gros cumulus posés sur l'horizon, séparés par des trouées de ciel bleu,
+                // blancs en haut et bleutés en bas
+                let p = Vec3::new(cx * 3.0, angle * 6.0, cz * 3.0);
+                let presence = lisse(0.38, 0.60, fbm_n(Vec3::new(cx * 1.1, 0.0, cz * 1.1), 11, 3));
+                let altitude = e / 0.35;
+                let densite = fbm(p, 3) + 0.30 * presence - 0.42 * altitude;
+                let a_cumulus = lisse(0.52, 0.60, densite) * lisse(0.0, 0.02, e);
+                let haut = fbm_n(p, 3, 3) - fbm_n(p + Vec3::Y * 0.25, 3, 3);
+                let lumiere = (haut * 5.0 + 0.55 + 0.6 * altitude).clamp(0.0, 1.0);
+                let teinte = ombre_nuage.lerp(blanc, lumiere);
+                c.lerp(teinte, a_cumulus)
+            };
+            donnees.extend_from_slice(&[
+                (couleur.x.clamp(0.0, 1.0) * 255.0) as u8,
+                (couleur.y.clamp(0.0, 1.0) * 255.0) as u8,
+                (couleur.z.clamp(0.0, 1.0) * 255.0) as u8,
+                255,
+            ]);
+        }
+    }
+    let mut image = Image::new(
+        Extent3d {
+            width: largeur,
+            height: hauteur,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        donnees,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::ClampToEdge,
+        ..ImageSamplerDescriptor::linear()
+    });
+    image
 }

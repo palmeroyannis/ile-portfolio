@@ -327,8 +327,8 @@ pub fn pave(
 /// Couleur du fond sous l'eau : sable clair près du bord, vert d'eau puis bleu profond.
 fn fond_marin(y: f32) -> [f32; 3] {
     let profondeur = ((crate::rendu::NIVEAU_MER - y) / 2.6).clamp(0.0, 1.0);
-    let clair = Vec3::new(0.86, 0.80, 0.60);
-    let moyen = Vec3::new(0.52, 0.72, 0.62);
+    let clair = Vec3::new(0.72, 0.94, 0.80);
+    let moyen = Vec3::new(0.36, 0.80, 0.74);
     let fonce = Vec3::new(0.16, 0.38, 0.50);
     let c = if profondeur < 0.4 {
         clair.lerp(moyen, profondeur / 0.4)
@@ -344,13 +344,13 @@ fn couleur_sol(x: f32, z: f32, h: f32, normale: Vec3) -> [f32; 3] {
     if h < crate::rendu::NIVEAU_MER {
         return fond_marin(h);
     }
-    let sable = v(couleur(0.93, 0.82, 0.56));
-    let sable_mouille = v(couleur(0.80, 0.71, 0.50));
+    let sable = v(couleur(0.96, 0.86, 0.60));
+    let sable_mouille = v(couleur(0.84, 0.74, 0.52));
     let roche = v(couleur(0.56, 0.53, 0.48));
     let chemin = v(couleur(0.78, 0.62, 0.40));
     // Deux verts qui alternent en grandes taches, pour casser l'uniformité
     let tache = bruit(x * 0.08 + 7.0, z * 0.08 - 3.0);
-    let herbe = v(couleur(0.30, 0.66, 0.22)).lerp(v(couleur(0.40, 0.70, 0.26)), tache);
+    let herbe = v(couleur(0.36, 0.70, 0.20)).lerp(v(couleur(0.50, 0.76, 0.24)), tache);
 
     let mut c = sable_mouille.lerp(sable, lissage(crate::rendu::NIVEAU_MER, 0.2, h));
     c = c.lerp(herbe, lissage(0.75, 1.15, h));
@@ -383,6 +383,7 @@ fn creer_terrain(
     let mut normales = Vec::with_capacity(n * n);
     let mut couleurs = Vec::with_capacity(n * n);
     let mut uvs = Vec::with_capacity(n * n);
+    let occultants = crate::ombres::occultants();
     for j in 0..n {
         for i in 0..n {
             let x = -moitie + i as f32 * pas;
@@ -395,7 +396,20 @@ fn creer_terrain(
                 hauteur(x, z - e) - hauteur(x, z + e),
             )
             .normalize();
-            let c = couleur_sol(x, z, h, normale);
+            let mut c = couleur_sol(x, z, h, normale);
+            if h > crate::rendu::NIVEAU_MER {
+                // Ombres des objets et coins assombris, peints dans la couleur du sol
+                let point = Vec3::new(x, h, z);
+                let moyenne = (hauteur(x + 3.0, z)
+                    + hauteur(x - 3.0, z)
+                    + hauteur(x, z + 3.0)
+                    + hauteur(x, z - 3.0))
+                    / 4.0;
+                let creux = ((moyenne - h) * 0.35).clamp(0.0, 0.35);
+                let occlusion = crate::ombres::occlusion(point, &occultants).max(creux);
+                let ombre = crate::ombres::ombre(point, &occultants);
+                c = crate::ombres::assombrir(Vec3::from_array(c), ombre, occlusion).to_array();
+            }
             points.push(Vec3::new(x, h, z));
             normales.push(normale.to_array());
             couleurs.push([c[0], c[1], c[2], 1.0]);

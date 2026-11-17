@@ -7,9 +7,11 @@ mod geo;
 mod joueur;
 mod lieux;
 mod monde;
+mod ombres;
 mod personnage;
 mod projets;
 mod rendu;
+mod soleil;
 
 use avian3d::prelude::*;
 use bevy::asset::AssetMetaCheck;
@@ -49,6 +51,24 @@ fn main() {
             personnage::PersonnagePlugin,
             camera::CameraPlugin,
             fiche::FichePlugin,
+            soleil::SoleilPlugin,
         ))
+        .add_systems(Update, masquer_chargement)
         .run();
+}
+
+/// Masque l'écran de chargement de la page web quelques images après le démarrage,
+/// le temps que l'île soit construite et affichée.
+fn masquer_chargement(mut images: Local<u32>) {
+    *images += 1;
+    if *images != 5 {
+        return;
+    }
+    #[cfg(target_arch = "wasm32")]
+    if let Some(ecran) = web_sys::window()
+        .and_then(|fenetre| fenetre.document())
+        .and_then(|page| page.get_element_by_id("chargement"))
+    {
+        let _ = ecran.class_list().add_1("fini");
+    }
 }

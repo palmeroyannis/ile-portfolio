@@ -20,3 +20,7 @@ opt-level = "z"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# Dans le navigateur uniquement : masquer l'écran de chargement une fois l'île affichée
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "DomTokenList"] }

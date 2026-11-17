@@ -24,7 +24,7 @@ const VERT_PALME: Color = Color::srgb(0.20, 0.55, 0.18);
 const VERT_PALME_CLAIR: Color = Color::srgb(0.32, 0.68, 0.22);
 const ECORCE: Color = Color::srgb(0.55, 0.42, 0.28);
 const ECORCE_SOMBRE: Color = Color::srgb(0.42, 0.31, 0.20);
-const HERBE: Color = Color::srgb(0.30, 0.66, 0.22);
+const HERBE: Color = Color::srgb(0.38, 0.70, 0.22);
 const PIERRE: Color = Color::srgb(0.58, 0.56, 0.52);
 const BOIS: Color = Color::srgb(0.60, 0.43, 0.26);
 const BOIS_SOMBRE: Color = Color::srgb(0.40, 0.28, 0.17);
@@ -205,6 +205,39 @@ fn animer_ecume(
 // Palmiers
 // ---------------------------------------------------------------------------
 
+/// Forme d'un palmier, partagée avec le calcul des ombres peintes au sol.
+pub struct Palmier {
+    pub pied: Vec3,
+    pub hauteur_tronc: f32,
+    /// Déport horizontal du sommet par rapport au pied
+    pub penche: Vec3,
+}
+
+impl Palmier {
+    pub fn sommet(&self) -> Vec3 {
+        self.pied + Vec3::Y * self.hauteur_tronc + self.penche
+    }
+}
+
+pub fn palmiers() -> Vec<Palmier> {
+    PALMIERS
+        .iter()
+        .enumerate()
+        .map(|(n, p)| {
+            let graine = n as u32;
+            // Les palmiers penchent vers l'extérieur de l'île, comme poussés par le vent du large
+            let dehors = p.normalize_or(Vec2::X);
+            let lateral = Vec2::new(-dehors.y, dehors.x) * (hasard(graine, 2, 20) - 0.5);
+            let penche = (dehors + lateral).normalize() * (0.9 + 0.9 * hasard(graine, 3, 20));
+            Palmier {
+                pied: sur_le_sol(*p, -0.1),
+                hauteur_tronc: 4.6 + 1.6 * hasard(graine, 1, 20),
+                penche: Vec3::new(penche.x, 0.0, penche.y),
+            }
+        })
+        .collect()
+}
+
 fn creer_palmiers(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -214,15 +247,9 @@ fn creer_palmiers(
     let mut troncs = Constructeur::default();
     let mut palmes = Constructeur::default();
 
-    for (n, p) in PALMIERS.iter().enumerate() {
+    for (n, palmier) in palmiers().iter().enumerate() {
         let graine = n as u32;
-        let pied = sur_le_sol(*p, -0.1);
-        let hauteur_tronc = 4.6 + 1.6 * hasard(graine, 1, 20);
-        // Les palmiers penchent vers l'extérieur de l'île, comme poussés par le vent du large
-        let dehors = p.normalize_or(Vec2::X);
-        let lateral = Vec2::new(-dehors.y, dehors.x) * (hasard(graine, 2, 20) - 0.5);
-        let penche = (dehors + lateral).normalize() * (0.9 + 0.9 * hasard(graine, 3, 20));
-        let penche = Vec3::new(penche.x, 0.0, penche.y);
+        let (pied, hauteur_tronc, penche) = (palmier.pied, palmier.hauteur_tronc, palmier.penche);
 
         // Tronc en tronçons, de plus en plus fins, sur une courbe
         let troncons = 7;
@@ -236,7 +263,7 @@ fn creer_palmiers(
             // Chaque tronçon s'évase un peu en bas : les anneaux de l'écorce
             troncs.cylindre(point(t0), point(t1), r0 * 1.12, r1, 6, couleur, false);
         }
-        let sommet = point(1.0);
+        let sommet = palmier.sommet();
 
         // Noix de coco
         for k in 0..3 {
@@ -288,6 +315,7 @@ fn creer_palmiers(
         ));
     }
 
+    troncs.assombrir_pres_du_sol();
     commands.spawn((
         Mesh3d(meshes.add(troncs.construire())),
         MeshMaterial3d(simple.clone()),
@@ -333,6 +361,7 @@ fn creer_herbe(
         Color::srgb(0.65, 0.55, 0.95),
     ];
 
+    let occultants = crate::ombres::occultants();
     let etendue = (46.0 / PAS_HERBE) as i32;
     for j in -etendue..=etendue {
         for i in -etendue..=etendue {
@@ -350,13 +379,22 @@ fn creer_herbe(
                 continue;
             }
             let pied = Vec3::new(p.x, h - 0.03, p.y);
+            let sol = Vec3::new(p.x, h, p.y);
+            let ombre = crate::ombres::ombre(sol, &occultants);
+            let occlusion = crate::ombres::occlusion(sol, &occultants);
+            let ombrer = |c: Color| crate::ombres::ombrer_couleur(c, ombre, occlusion);
 
             if hasard(iu, ju, 33) < PART_FLEURS {
                 // Fleur : une tige et une corolle en losange
                 let haut = pied + Vec3::Y * (0.30 + 0.2 * hasard(iu, ju, 34));
-                herbe.triangle_double(pied + Vec3::X * 0.02, pied - Vec3::X * 0.02, haut, HERBE);
+                herbe.triangle_double(
+                    pied + Vec3::X * 0.02,
+                    pied - Vec3::X * 0.02,
+                    haut,
+                    ombrer(HERBE),
+                );
                 let c = couleurs_fleurs[(hasard(iu, ju, 35) * 4.99) as usize];
-                herbe.losange(haut, Vec3::new(0.09, 0.05, 0.09), c);
+                herbe.losange(haut, Vec3::new(0.09, 0.05, 0.09), ombrer(c));
                 continue;
             }
 
@@ -368,7 +406,7 @@ fn creer_herbe(
                 let travers = Vec3::new(-d.z, 0.0, d.x) * 0.07;
                 let hauteur_brin = 0.30 + 0.30 * hasard(iu, ju, 40 + b);
                 let pointe = pied + Vec3::Y * hauteur_brin + d * 0.18;
-                let teinte = nuance(HERBE, 0.85 + 0.35 * hasard(iu, ju, 45 + b));
+                let teinte = ombrer(nuance(HERBE, 0.85 + 0.35 * hasard(iu, ju, 45 + b)));
                 herbe.triangle_double(pied + travers, pied - travers, pointe, teinte);
             }
         }
@@ -384,28 +422,12 @@ fn creer_herbe(
 // Rochers
 // ---------------------------------------------------------------------------
 
-fn creer_rochers(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    simple: &Handle<StandardMaterial>,
-) {
-    let mut rochers = Constructeur::default();
-    let poser = |rochers: &mut Constructeur,
-                 commands: &mut Commands,
-                 centre: Vec3,
-                 taille: Vec3,
-                 graine: u32| {
-        let rotation = Quat::from_rotation_y(hasard(graine, 0, 50) * TAU)
-            * Quat::from_rotation_x(hasard(graine, 1, 50) * 0.4);
-        let teinte = nuance(PIERRE, 0.85 + 0.25 * hasard(graine, 2, 50));
-        let points = rochers.rocher(centre, taille, rotation, graine, teinte);
-        if let Some(collision) = Collider::convex_hull(points) {
-            commands.spawn((Transform::default(), RigidBody::Static, collision));
-        }
-    };
+/// Emplacement, taille et graine de chaque rocher (partagé avec les ombres peintes au sol).
+pub fn rochers() -> Vec<(Vec3, Vec3, u32)> {
+    let mut liste = Vec::new();
+    let mut graine = 100;
 
     // Autour de l'île, à cheval sur le rivage (certains dans l'eau)
-    let mut graine = 100;
     for k in 0..26 {
         let angle = k as f32 / 26.0 * TAU + hasard(k, 0, 51) * 0.18;
         // Pas devant le ponton ni sur la plage de départ (au sud, angle ≈ π/2)
@@ -417,25 +439,21 @@ fn creer_rochers(
         let p = Vec2::new(angle.cos(), angle.sin()) * r;
         let taille = 0.6 + 1.4 * hasard(k, 2, 51);
         let centre = Vec3::new(p.x, hauteur(p.x, p.y) + taille * 0.25, p.y);
-        poser(
-            &mut rochers,
-            commands,
+        liste.push((
             centre,
             Vec3::new(taille * 1.2, taille * 0.8, taille),
             graine,
-        );
+        ));
         graine += 1;
         // Parfois un petit rocher à côté
         if hasard(k, 3, 51) > 0.5 {
             let q = p + Vec2::new(hasard(k, 4, 51) - 0.5, hasard(k, 5, 51) - 0.5) * 3.0;
             let t = taille * 0.45;
-            poser(
-                &mut rochers,
-                commands,
+            liste.push((
                 Vec3::new(q.x, hauteur(q.x, q.y) + t * 0.2, q.y),
                 Vec3::splat(t),
                 graine,
-            );
+            ));
             graine += 1;
         }
     }
@@ -454,18 +472,34 @@ fn creer_rochers(
         }
         let taille = 0.5 + 0.9 * hasard(k, 7, 52);
         let centre = Vec3::new(p.x, hauteur(p.x, p.y) + taille * 0.2, p.y);
-        poser(
-            &mut rochers,
-            commands,
+        liste.push((
             centre,
             Vec3::new(taille, taille * 0.7, taille * 1.1),
             graine,
-        );
+        ));
         graine += 1;
     }
+    liste
+}
 
+fn creer_rochers(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    simple: &Handle<StandardMaterial>,
+) {
+    let mut maillage = Constructeur::default();
+    for (centre, taille, graine) in rochers() {
+        let rotation = Quat::from_rotation_y(hasard(graine, 0, 50) * TAU)
+            * Quat::from_rotation_x(hasard(graine, 1, 50) * 0.4);
+        let teinte = nuance(PIERRE, 0.85 + 0.25 * hasard(graine, 2, 50));
+        let points = maillage.rocher(centre, taille, rotation, graine, teinte);
+        if let Some(collision) = Collider::convex_hull(points) {
+            commands.spawn((Transform::default(), RigidBody::Static, collision));
+        }
+    }
+    maillage.assombrir_pres_du_sol();
     commands.spawn((
-        Mesh3d(meshes.add(rochers.construire())),
+        Mesh3d(meshes.add(maillage.construire())),
         MeshMaterial3d(simple.clone()),
     ));
 }
